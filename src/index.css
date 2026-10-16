@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@theme {
+  --animate-fade: fade 0.18s ease-out;
+  --animate-rise: rise 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+}
+
+@layer base {
+  body {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+}
