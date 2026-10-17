@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
-import type { Todo, TodoFilter, TodoStatus, UserProfile } from './types/todo.ts'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { Todo, TodoFilter, TodoStats, TodoStatus, UserProfile } from './types/todo.ts'
+import { DEFAULT_PROFILE } from './types/todo.ts'
+import { fetchProfile, saveProfile as saveProfileApi } from './lib/profile-api.ts'
 import {
-  PROFILE_STORAGE_KEY,
-  TODOS_STORAGE_KEY,
-  loadProfile,
-  loadTodos,
-  saveJSON,
-} from './lib/storage.ts'
-import { STATUS_DOT_CLASSES, createId } from './lib/utils.ts'
+  bulkDeleteTodos,
+  bulkUpdateTodoStatus,
+  createTodo,
+  deleteTodo,
+  fetchTodoStats,
+  fetchTodos,
+  updateTodo,
+} from './lib/todos-api.ts'
+import { STATUS_DOT_CLASSES } from './lib/utils.ts'
 import { Header } from './components/Header.tsx'
 import { ProfileModal } from './components/ProfileModal.tsx'
 import { TodoForm } from './components/TodoForm.tsx'
@@ -15,38 +19,10 @@ import { TodoFilters } from './components/TodoFilters.tsx'
 import { TodoList } from './components/TodoList.tsx'
 import { BulkActionsBar } from './components/BulkActionsBar.tsx'
 
-type TodoAction =
-  | { type: 'add'; todo: Todo }
-  | { type: 'update'; id: string; patch: Partial<Pick<Todo, 'title' | 'status' | 'starred'>> }
-  | { type: 'toggleStar'; id: string }
-  | { type: 'delete'; id: string }
-  | { type: 'bulkDelete'; ids: string[] }
-  | { type: 'bulkStatus'; ids: string[]; status: TodoStatus }
+const EMPTY_STATS: TodoStats = { total: 0, todo: 0, inProgress: 0, done: 0, starred: 0 }
 
-const todoReducer = (todos: Todo[], action: TodoAction): Todo[] => {
-  switch (action.type) {
-    case 'add':
-      return [action.todo, ...todos]
-    case 'update':
-      return todos.map((todo) => (todo.id === action.id ? { ...todo, ...action.patch } : todo))
-    case 'toggleStar':
-      return todos.map((todo) =>
-        todo.id === action.id ? { ...todo, starred: !todo.starred } : todo,
-      )
-    case 'delete':
-      return todos.filter((todo) => todo.id !== action.id)
-    case 'bulkDelete': {
-      const idsToRemove = new Set(action.ids)
-      return todos.filter((todo) => !idsToRemove.has(todo.id))
-    }
-    case 'bulkStatus': {
-      const idsToUpdate = new Set(action.ids)
-      return todos.map((todo) =>
-        idsToUpdate.has(todo.id) ? { ...todo, status: action.status } : todo,
-      )
-    }
-  }
-}
+/** Waits for the user to pause typing before searching, so we don't hit the API per keystroke. */
+const SEARCH_DEBOUNCE_MS = 300
 
 interface StatTileProps {
   label: string
@@ -67,43 +43,79 @@ const StatTile = ({ label, value, dotClass, sub }: StatTileProps) => (
 )
 
 const App = () => {
-  const [todos, dispatch] = useReducer(todoReducer, undefined, loadTodos)
-  const [profile, setProfile] = useState<UserProfile>(loadProfile)
+  const [todos, setTodos] = useState<Todo[]>([])
+  const [stats, setStats] = useState<TodoStats>(EMPTY_STATS)
+  const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE)
   const [filter, setFilter] = useState<TodoFilter>('All')
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [isProfileOpen, setIsProfileOpen] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  // Bumped after every mutation to re-run the list + stats fetches.
+  const [refreshKey, setRefreshKey] = useState(0)
 
+  const refresh = useCallback(() => setRefreshKey((key) => key + 1), [])
+
+  // Load the profile once on mount.
   useEffect(() => {
-    saveJSON(TODOS_STORAGE_KEY, todos)
-  }, [todos])
+    const controller = new AbortController()
+    fetchProfile(controller.signal)
+      .then(setProfile)
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return
+        setError(cause instanceof Error ? cause.message : 'Could not load the profile.')
+      })
+    return () => controller.abort()
+  }, [])
 
+  // Load the todo list whenever the filter, search, or refresh key changes.
   useEffect(() => {
-    saveJSON(PROFILE_STORAGE_KEY, profile)
-  }, [profile])
+    const controller = new AbortController()
+    const debounce = setTimeout(
+      () => {
+        fetchTodos({ status: filter, search }, controller.signal)
+          .then((nextTodos) => {
+            setTodos(nextTodos)
+            setError(null)
+          })
+          .catch((cause: unknown) => {
+            if (controller.signal.aborted) return
+            setError(cause instanceof Error ? cause.message : 'Could not load tasks.')
+          })
+          .finally(() => {
+            if (!controller.signal.aborted) setIsLoading(false)
+          })
+      },
+      search === '' ? 0 : SEARCH_DEBOUNCE_MS,
+    )
 
-  const stats = useMemo(() => {
-    const next = { total: todos.length, todo: 0, inProgress: 0, done: 0, starred: 0 }
-    for (const todo of todos) {
-      if (todo.status === 'To Do') next.todo += 1
-      else if (todo.status === 'In Progress') next.inProgress += 1
-      else next.done += 1
-      if (todo.starred) next.starred += 1
+    return () => {
+      clearTimeout(debounce)
+      controller.abort()
     }
-    return next
-  }, [todos])
+  }, [filter, search, refreshKey])
 
-  const visibleTodos = useMemo(() => {
-    const query = search.trim().toLowerCase()
-    return todos
-      .filter((todo) => filter === 'All' || todo.status === filter)
-      .filter((todo) => query === '' || todo.title.toLowerCase().includes(query))
-      .sort((a, b) => {
+  // Counts are global, so they refresh after every mutation too.
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchTodoStats(controller.signal)
+      .then(setStats)
+      .catch(() => {
+        // Stats are decorative — keep the previous numbers on failure.
+      })
+    return () => controller.abort()
+  }, [refreshKey])
+
+  const visibleTodos = useMemo(
+    () =>
+      [...todos].sort((a, b) => {
         if (a.starred !== b.starred) return a.starred ? -1 : 1
         return b.createdAt - a.createdAt
-      })
-  }, [todos, filter, search])
+      }),
+    [todos],
+  )
 
   // Count only ids that still exist, so deleted tasks never linger in the bulk bar.
   const selectedCount = useMemo(() => {
@@ -120,29 +132,40 @@ const App = () => {
   const openProfile = useCallback(() => setIsProfileOpen(true), [])
   const closeProfile = useCallback(() => setIsProfileOpen(false), [])
 
+  const runMutation = async (action: () => Promise<unknown>) => {
+    try {
+      await action()
+      setError(null)
+      refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Something went wrong.')
+      // Re-sync with the server so the UI never shows a state that wasn't saved.
+      refresh()
+    }
+  }
+
   const addTodo = (title: string, status: TodoStatus) => {
-    dispatch({
-      type: 'add',
-      todo: { id: createId(), title, status, starred: false, createdAt: Date.now() },
-    })
+    void runMutation(() => createTodo(title, status))
   }
 
   const toggleStar = (id: string) => {
-    dispatch({ type: 'toggleStar', id })
+    const current = todos.find((todo) => todo.id === id)
+    if (current === undefined) return
+    void runMutation(() => updateTodo(id, { starred: !current.starred }))
   }
 
   const changeStatus = (id: string, status: TodoStatus) => {
-    dispatch({ type: 'update', id, patch: { status } })
+    void runMutation(() => updateTodo(id, { status }))
   }
 
   const submitEdit = (id: string, title: string, status: TodoStatus) => {
-    dispatch({ type: 'update', id, patch: { title, status } })
     setEditingId(null)
+    void runMutation(() => updateTodo(id, { title, status }))
   }
 
-  const deleteTodo = (id: string) => {
-    dispatch({ type: 'delete', id })
+  const removeTodo = (id: string) => {
     setEditingId((current) => (current === id ? null : current))
+    void runMutation(() => deleteTodo(id))
   }
 
   const toggleSelected = (id: string) => {
@@ -170,35 +193,67 @@ const App = () => {
 
   const bulkUpdateStatus = (status: TodoStatus) => {
     const ids = todos.filter((todo) => selectedIds.has(todo.id)).map((todo) => todo.id)
-    dispatch({ type: 'bulkStatus', ids, status })
+    if (ids.length === 0) return
     setSelectedIds(new Set())
     setEditingId((current) => (current !== null && ids.includes(current) ? null : current))
+    void runMutation(() => bulkUpdateTodoStatus(ids, status))
   }
 
   const bulkDelete = () => {
     const ids = todos.filter((todo) => selectedIds.has(todo.id)).map((todo) => todo.id)
-    dispatch({ type: 'bulkDelete', ids })
+    if (ids.length === 0) return
     setSelectedIds(new Set())
     setEditingId((current) => (current !== null && ids.includes(current) ? null : current))
+    void runMutation(() => bulkDeleteTodos(ids))
+  }
+
+  const changeFilter = (nextFilter: TodoFilter) => {
+    setFilter(nextFilter)
+    setSelectedIds(new Set())
+  }
+
+  const changeSearch = (value: string) => {
+    setSearch(value)
+    setSelectedIds(new Set())
   }
 
   const clearFilters = () => {
     setFilter('All')
     setSearch('')
+    setSelectedIds(new Set())
   }
 
   const startEditing = (id: string) => setEditingId(id)
   const stopEditing = () => setEditingId(null)
 
   const saveProfile = (nextProfile: UserProfile) => {
-    setProfile(nextProfile)
     setIsProfileOpen(false)
+    void runMutation(async () => {
+      const saved = await saveProfileApi(nextProfile)
+      setProfile(saved)
+    })
   }
 
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-4 py-8 sm:px-6 lg:py-12">
         <Header profile={profile} onEditProfile={openProfile} />
+
+        {error !== null && (
+          <div
+            role="alert"
+            className="animate-fade flex items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
+          >
+            <p className="font-medium">{error}</p>
+            <button
+              type="button"
+              onClick={refresh}
+              className="shrink-0 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-100"
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
         <section aria-label="Task summary" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatTile
@@ -219,29 +274,36 @@ const App = () => {
 
         <TodoFilters
           search={search}
-          onSearchChange={setSearch}
+          onSearchChange={changeSearch}
           filter={filter}
-          onFilterChange={setFilter}
+          onFilterChange={changeFilter}
           stats={stats}
           visibleCount={visibleTodos.length}
           allVisibleSelected={allVisibleSelected}
           onToggleSelectAll={toggleSelectAllVisible}
         />
 
-        <TodoList
-          todos={visibleTodos}
-          selectedIds={selectedIds}
-          editingId={editingId}
-          hasAnyTodos={todos.length > 0}
-          onToggleSelected={toggleSelected}
-          onToggleStar={toggleStar}
-          onChangeStatus={changeStatus}
-          onSubmitEdit={submitEdit}
-          onDelete={deleteTodo}
-          onStartEditing={startEditing}
-          onStopEditing={stopEditing}
-          onClearFilters={clearFilters}
-        />
+        {isLoading ? (
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white/70 px-6 py-14 text-center">
+            <span className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" />
+            <p className="text-sm font-medium text-slate-500">Loading tasks…</p>
+          </div>
+        ) : (
+          <TodoList
+            todos={visibleTodos}
+            selectedIds={selectedIds}
+            editingId={editingId}
+            hasAnyTodos={todos.length > 0}
+            onToggleSelected={toggleSelected}
+            onToggleStar={toggleStar}
+            onChangeStatus={changeStatus}
+            onSubmitEdit={submitEdit}
+            onDelete={removeTodo}
+            onStartEditing={startEditing}
+            onStopEditing={stopEditing}
+            onClearFilters={clearFilters}
+          />
+        )}
 
         <BulkActionsBar
           count={selectedCount}
