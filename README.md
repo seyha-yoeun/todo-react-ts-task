@@ -1,75 +1,55 @@
-# React + TypeScript + Vite
+# TaskFlow — React + TypeScript + Vite
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Todo app UI (React 19, Tailwind 4, Vite). All data lives in the NestJS backend
+in `../todo-backend` — there is no localStorage persistence anymore.
 
-Currently, two official plugins are available:
+## Running
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The app needs the backend API running:
 
-## React Compiler
+```bash
+# terminal 1 — backend (see todo-backend/README.md for first-time setup)
+cd ../todo-backend && docker compose up -d && npm run migration:run && npm run start:dev
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+# terminal 2 — frontend
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+Open http://localhost:5173.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Vite proxies `/api/*` to `http://localhost:3000` (see `vite.config.ts`), so the
+frontend talks to the API without CORS concerns during development.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+To point at a different backend (e.g. a deployed one), set:
 
+```bash
+VITE_API_URL=https://api.example.com/api npm run build
+```
+
+## API usage
+
+The UI talks to these backend endpoints (`src/lib/*-api.ts`):
+
+| Feature            | Call                                                     |
+| ------------------ | -------------------------------------------------------- |
+| List/filter/search | `GET /api/v1/todo?status=&q=`                            |
+| Stats tiles        | `GET /api/v1/todo/stats`                                 |
+| Create             | `POST /api/v1/todo`                                      |
+| Edit / star        | `PATCH /api/v1/todo/:id`                                 |
+| Delete             | `DELETE /api/v1/todo/:id`                                |
+| Bulk status/delete | `PATCH /api/v1/todo/bulk/status`, `DELETE /api/v1/todo/bulk` |
+| Profile            | `GET` / `PUT /api/v1/profile`                            |
+
+Filtering, search, and sorting are done server-side; the client shows a
+debounced (300 ms) search and re-fetches after every mutation so the UI always
+reflects saved data. API failures surface in an alert banner with a Retry button.
+
+## Scripts
+
+```bash
+npm run dev      # dev server with HMR
+npm run build    # type-check + production build
+npm run lint     # ESLint
+npm run preview  # preview the production build
 ```
