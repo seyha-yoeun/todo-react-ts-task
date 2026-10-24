@@ -3,6 +3,7 @@ export interface AuthUser {
   firstName: string
   lastName: string
   email: string
+  role: 'user' | 'admin'
   createdAt: number
   updatedAt: number
 }
