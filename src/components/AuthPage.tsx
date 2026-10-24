@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { useAuth } from '../context/AuthContext.tsx'
+import { useAuth } from '../context/auth-context.ts'
 import { CheckIcon, EyeIcon, EyeOffIcon, LockIcon, MailIcon, UserIcon, XIcon } from './icons.tsx'
 
 export const AuthPage = () => {

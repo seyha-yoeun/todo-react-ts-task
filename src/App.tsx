@@ -18,7 +18,8 @@ import { TodoForm } from './components/TodoForm.tsx'
 import { TodoFilters } from './components/TodoFilters.tsx'
 import { TodoList } from './components/TodoList.tsx'
 import { BulkActionsBar } from './components/BulkActionsBar.tsx'
-import { AuthProvider, useAuth } from './context/AuthContext.tsx'
+import { AuthProvider } from './context/AuthContext.tsx'
+import { useAuth } from './context/auth-context.ts'
 import { AuthPage } from './components/AuthPage.tsx'
 
 const EMPTY_STATS: TodoStats = { total: 0, todo: 0, inProgress: 0, done: 0, starred: 0 }
@@ -333,8 +334,20 @@ const Dashboard = () => {
   )
 }
 
+const SessionLoader = () => (
+  <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+    <div className="flex flex-col items-center gap-3">
+      <span className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" />
+      <p className="text-sm font-medium text-slate-500">Restoring your session…</p>
+    </div>
+  </div>
+)
+
 const MainApp = () => {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, isInitializing } = useAuth()
+  if (isInitializing) {
+    return <SessionLoader />
+  }
   if (!isAuthenticated) {
     return <AuthPage />
   }
