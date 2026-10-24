@@ -17,6 +17,8 @@ interface RequestOptions {
   signal?: AbortSignal
 }
 
+import { clearAccessToken, getAccessToken } from './auth-token.ts'
+
 /**
  * Thin fetch wrapper: JSON in, JSON out, with backend validation
  * messages surfaced as `ApiError`.
@@ -24,11 +26,20 @@ interface RequestOptions {
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, signal } = options
 
+  const headers: Record<string, string> = {}
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+  }
+  const token = getAccessToken()
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
   let response: Response
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       method,
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
     })
@@ -38,6 +49,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
 
   if (!response.ok) {
+    if (response.status === 401) {
+      clearAccessToken()
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('auth:unauthorized'))
+      }
+    }
     throw new ApiError(response.status, await errorMessage(response))
   }
 
