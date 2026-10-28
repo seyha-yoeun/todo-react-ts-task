@@ -45,7 +45,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [])
 
   const logout = useCallback(() => {
-    authApi.logout()
+    void authApi.logout()
     setUser(null)
     setError(null)
   }, [])
@@ -77,7 +77,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const handleUnauthorized = () => {
-      authApi.logout()
+      void authApi.logout()
       setUser(null)
       setError('Your session has expired. Please sign in again.')
     }
@@ -92,7 +92,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setError(null)
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 401) {
-        authApi.logout()
+        void authApi.logout()
         setUser(null)
       }
       throw cause

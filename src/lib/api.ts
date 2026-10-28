@@ -12,7 +12,12 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
 const REFRESH_PATH = '/v1/auth/refresh'
 
 /** Auth endpoints must not trigger the refresh/retry flow on a 401. */
-const AUTH_ENDPOINTS = new Set(['/v1/auth/login', '/v1/auth/signup', REFRESH_PATH])
+const AUTH_ENDPOINTS = new Set([
+  '/v1/auth/login',
+  '/v1/auth/signup',
+  '/v1/auth/logout',
+  REFRESH_PATH,
+])
 
 export class ApiError extends Error {
   readonly status: number

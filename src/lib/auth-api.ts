@@ -1,6 +1,6 @@
 import type { AuthResponse, AuthUser, LoginCredentials, SignupCredentials } from '../types/auth.ts'
 import { apiRequest } from './api.ts'
-import { clearTokens, setAccessToken, setRefreshToken } from './auth-token.ts'
+import { clearTokens, getRefreshToken, setAccessToken, setRefreshToken } from './auth-token.ts'
 
 const AUTH_BASE = '/v1/auth'
 
@@ -35,9 +35,19 @@ export async function fetchMe(signal?: AbortSignal): Promise<AuthUser> {
 }
 
 /**
- * Logs out locally. The access/refresh tokens are discarded; the in-flight
- * refresh request (if any) has already been rotated by the backend.
+ * POST /v1/auth/logout — clears local tokens right away, then asks the
+ * backend to revoke the session so the tokens stop working server-side too.
  */
-export function logout(): void {
+export async function logout(): Promise<void> {
+  const refreshToken = getRefreshToken()
   clearTokens()
+  if (!refreshToken) return
+  try {
+    await apiRequest<void>(`${AUTH_BASE}/logout`, {
+      method: 'POST',
+      body: { refreshToken },
+    })
+  } catch {
+    // Already signed out locally; the tokens will expire on their own.
+  }
 }
